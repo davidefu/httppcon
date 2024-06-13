@@ -6,6 +6,7 @@ public class LibCurlWrapper
 {
     const string LibCurlDll = "libcurl-x64.dll";
     private static string logfile;
+    private static string summaryfile;
 
     [DllImport(LibCurlDll)]
     public static extern CURLcode curl_global_init(long flags);
@@ -31,6 +32,9 @@ public class LibCurlWrapper
     [DllImport(LibCurlDll)]
     public static extern CURLcode curl_easy_getinfo(IntPtr handle, CURLINFO info, out ulong value);
 
+    [DllImport(LibCurlDll)]
+    public static extern CURLcode curl_easy_getinfo(IntPtr handle, CURLINFO info, out IntPtr pInfo);
+
     public enum CURLcode : int
     {
         CURLE_OK = 0
@@ -55,7 +59,11 @@ public class LibCurlWrapper
     {
         CURLINFO_RESPONSE_CODE = 0x200002,
         CURLINFO_CONN_ID = 0x600040,  // The ID for CURLINFO_CONN_ID,
-        CURLINFO_XFER_ID = 0x60003F
+        CURLINFO_XFER_ID = 0x60003F,
+        CURLINFO_PRIMARY_PORT = 0x200000 + 40,
+        CURLINFO_LOCAL_PORT = 0x200000 + 42,
+        CURLINFO_SCHEME = 0x100000 + 49,
+        CURLINFO_PRIMARY_IP = 0x100000 + 32
     }
 
     // Delegate for the write callback
@@ -148,22 +156,49 @@ public class LibCurlWrapper
 
         // Perform the request
         CURLcode res = curl_easy_perform(curl);
+
+        // Get the connection ID
+        ulong connId;
+        curl_easy_getinfo(curl, CURLINFO.CURLINFO_CONN_ID, out connId);
+        WriteToLogFile("Connection ID: " + connId);
+
+        ulong xfer;
+        curl_easy_getinfo(curl, CURLINFO.CURLINFO_XFER_ID, out xfer);
+        WriteToLogFile("Xfer ID: " + xfer);
+        
+        var ip= GetInfoString(curl, CURLINFO.CURLINFO_PRIMARY_IP);
+
+        ulong rc;
+        curl_easy_getinfo(curl, CURLINFO.CURLINFO_RESPONSE_CODE, out rc);
+
+        var scstring= GetInfoString(curl, CURLINFO.CURLINFO_SCHEME);
+        
+        ulong lport;
+        curl_easy_getinfo(curl, CURLINFO.CURLINFO_LOCAL_PORT, out lport);
+
+        ulong pport;
+        curl_easy_getinfo(curl, CURLINFO.CURLINFO_PRIMARY_PORT, out pport);
+
+        var tmp = new Summary() {
+            ConnId = connId,
+            XferId = xfer,
+            Ip = ip,
+            LocalPort = lport,
+            RemotePort = pport,
+            ResponseCode = rc,
+            Scheme = scstring,
+            now = DateTime.Now
+        };
+        summary.Add(tmp);
+
         if (res != CURLcode.CURLE_OK)
         {
             WriteToLogFile("Error: " + res);
+            tmp.isError = true;
         }
         else
         {
             WriteToLogFile("Response Data: " + responseData.ToString());
-
-            // Get the connection ID
-            ulong connId;
-            curl_easy_getinfo(curl, CURLINFO.CURLINFO_CONN_ID, out connId);
-            WriteToLogFile("Connection ID: " + connId);
-
-            ulong xfer;
-            curl_easy_getinfo(curl, CURLINFO.CURLINFO_XFER_ID, out xfer);
-            WriteToLogFile("Xfer ID: " + xfer);
         }
 
         // Cleanup
@@ -171,9 +206,37 @@ public class LibCurlWrapper
         curl_slist_free_all(headersList);
     }
 
+    private static string GetInfoString(nint curl, CURLINFO info)
+    {
+        IntPtr ip;
+        curl_easy_getinfo(curl, info, out ip);
+        if (ip != IntPtr.Zero) {
+            return Marshal.PtrToStringAnsi(ip);
+        }
+        return "";
+    }
+
+    static List<Summary> summary = new List<Summary>();
+    
     private static void WriteToLogFile(string v)
     {
         File.AppendAllText(logfile, $"{v}{Environment.NewLine}");
+    }
+
+    private static void WriteToSummaryFile(string v)
+    {
+        File.AppendAllText(summaryfile, $"{v}{Environment.NewLine}");
+    }
+
+    private static void WriteToSummaryFile(Dictionary<Tuple<string, ulong, ulong>, int> summaryconn)
+    {
+        File.AppendAllText(summaryfile, $"{Environment.NewLine}");
+        File.AppendAllText(summaryfile, $"{Environment.NewLine}");
+        File.AppendAllText(summaryfile, $"Connection Reuse Summary{Environment.NewLine}");
+        foreach (var item in summaryconn)
+        {
+            File.AppendAllText(summaryfile, $"Ip: {item.Key.Item1} | Port: {item.Key.Item2} | Conn Id: {item.Key.Item3} | Reused times: {item.Value}{Environment.NewLine}");
+        }
     }
 
     [DllImport(LibCurlDll)]
@@ -193,7 +256,9 @@ public class LibCurlWrapper
         {
             // Read all lines from the CSV file
             var lines = File.ReadAllLines(args[0]);
-            logfile = $"curloutput_{Path.GetFileNameWithoutExtension(args[0])}_{DateTime.Now.ToString("yyyy-MM-dd_hh-mm-ss")}.txt";
+            var now = DateTime.Now.ToString("yyyy-MM-dd_hh-mm-ss");
+            logfile = $"curloutput_{Path.GetFileNameWithoutExtension(args[0])}_{now}.txt";
+            summaryfile = $"curloutput_summary_{Path.GetFileNameWithoutExtension(args[0])}_{now}.txt";
             // List to store the parsed data
             var data = new List<(string, int, string)>();
 
@@ -238,6 +303,20 @@ public class LibCurlWrapper
                 await Task.Delay(TimeSpan.FromSeconds(intValue));
             }
 
+            Dictionary<Tuple<string, ulong, ulong>, int> summaryconn = new Dictionary<Tuple<string, ulong, ulong>, int>();
+            
+            foreach (var item in summary) {
+                WriteToSummaryFile($"Time: {item.now} | IP: {item.Ip} | Scheme: {item.Scheme} | Port: {item.RemotePort} | Status Code: {item.ResponseCode} | Connection id: {item.ConnId} | XferId: {item.XferId} | Local port: {item.LocalPort}");
+                var t = new Tuple<string, ulong, ulong>(item.Ip, item.RemotePort, item.ConnId);
+                if (summaryconn.ContainsKey(t)) {
+                    summaryconn[t] += 1;
+                }
+                else {
+                    summaryconn.Add(t, 0);
+                }
+            }
+            WriteToSummaryFile(summaryconn);
+            
             // Clean up the CURL easy handle
             curl_easy_cleanup(curl);
         }
@@ -245,4 +324,18 @@ public class LibCurlWrapper
         // Clean up the global environment
         curl_global_cleanup();
     }
+
+}
+
+internal class Summary
+{
+    public string Ip;
+    public string Scheme;
+    public ulong LocalPort;
+    public ulong RemotePort;
+    public ulong ConnId;
+    public ulong ResponseCode;
+    public ulong XferId;
+    public bool isError;
+    public DateTime now;
 }
