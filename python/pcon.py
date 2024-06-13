@@ -19,21 +19,27 @@ class LoggingAdapter(HTTPAdapter):
     def send(self, request, *args, **kwargs):
         parsed_url = urlparse(request.url)
 
-        response = super(LoggingAdapter, self).send(request, *args, **kwargs)
+        try:
 
-        fd = response.raw._original_response.fp.name
+            response = super(LoggingAdapter, self).send(request, *args, **kwargs)
 
-        connection_key = (parsed_url.scheme, parsed_url.hostname, parsed_url.port or (443 if parsed_url.scheme == 'https' else 80), fd)
+            fd = response.raw._original_response.fp.name
 
-        if connection_key in self.connection_info:
-            reused = True
-            self.connection_info[connection_key] += 1
-        else:
-            reused = False
-            self.connection_info[connection_key] = 0
+            connection_key = (parsed_url.scheme, parsed_url.hostname, parsed_url.port or (443 if parsed_url.scheme == 'https' else 80), fd)
 
-        status_code = response.status_code
-        log_entry = f'Time: {datetime.now()} | URL: {request.url} | Status Code: {status_code} | Connection Reused: {reused} | FD: {response.raw._original_response.fp.name}'
+            if connection_key in self.connection_info:
+                reused = True
+                self.connection_info[connection_key] += 1
+            else:
+                reused = False
+                self.connection_info[connection_key] = 0
+
+            status_code = response.status_code
+            log_entry = f'Time: {datetime.now()} | URL: {request.url} | Status Code: {status_code} | Connection Reused: {reused} | FD: {response.raw._original_response.fp.name}'
+        except Exception as e:
+            response = None
+            log_entry = f'Time: {datetime.now()} | URL: {request.url} | Exception: {e}'
+
         with open(output_file_name, 'a') as output_file:
             output_file.write(log_entry + '\n')
         print(log_entry)
