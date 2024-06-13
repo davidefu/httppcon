@@ -108,7 +108,7 @@ public class LibCurlWrapper
         }
     }
 
-    public static void PerformGetRequest(IntPtr curl, string url)
+    public static void PerformGetRequest(IntPtr curl, string url, string hostheader)
     {
         // Set URL
         curl_easy_setopt(curl, CURLoption.CURLOPT_URL, Marshal.StringToHGlobalAnsi(url));
@@ -124,11 +124,13 @@ public class LibCurlWrapper
 
         curl_easy_setopt(curl, CURLoption.CURLOPT_SSL_VERIFYPEER, (IntPtr)0);
 
-        // Set HTTP header for trace ID
-        /*IntPtr headersList = IntPtr.Zero;
-        string traceIdHeader = "TraceID: YOUR_TRACE_ID_HERE";
-        headersList = curl_slist_append(headersList, traceIdHeader);
-        curl_easy_setopt(curl, CURLoption.CURLOPT_HTTPHEADER, headersList);*/
+        IntPtr headersList = IntPtr.Zero;
+        if(!string.IsNullOrWhiteSpace(hostheader)) 
+        {
+            string h = $"Host: {hostheader}";
+            headersList = curl_slist_append(headersList, h);
+            curl_easy_setopt(curl, CURLoption.CURLOPT_HTTPHEADER, headersList);
+        }
 
         // Set up string builder to capture the output
         StringBuilder responseData = new StringBuilder();
@@ -163,7 +165,7 @@ public class LibCurlWrapper
 
         // Cleanup
         handle.Free();
-        //curl_slist_free_all(headersList);
+        curl_slist_free_all(headersList);
     }
 
     private static void WriteToLogFile(string v)
@@ -190,21 +192,26 @@ public class LibCurlWrapper
             var lines = File.ReadAllLines(args[0]);
             logfile = $"curloutput_{Path.GetFileNameWithoutExtension(args[0])}_{DateTime.Now.ToString("yyyy-MM-dd_hh-mm-ss")}.txt";
             // List to store the parsed data
-            var data = new List<(string, int)>();
+            var data = new List<(string, int, string)>();
 
             foreach (var line in lines)
             {
                 // Split each line by the comma delimiter
                 var parts = line.Split(',');
 
-                if (parts.Length == 2)
+                if (parts.Length >= 2)
                 {
                     // Parse the first part as string and the second part as integer
                     string strValue = parts[0];
                     if (int.TryParse(parts[1], out int intValue))
                     {
+                        var hostheader = "";
+                        if (parts.Length > 2) 
+                        {
+                            hostheader = parts[2];
+                        }
                         // Add the parsed data to the list
-                        data.Add((strValue, intValue));
+                        data.Add((strValue, intValue, hostheader));
                     }
                     else
                     {
@@ -218,11 +225,11 @@ public class LibCurlWrapper
             }
 
             // Iterate over the parsed values
-            foreach (var (strValue, intValue) in data)
+            foreach (var (strValue, intValue, hostheader) in data)
             {
                 WriteToLogFile($"{DateTime.Now.ToString("O")} Performing request to {strValue}");
                 // Perform the HTTP GET request
-                PerformGetRequest(curl, strValue);
+                PerformGetRequest(curl, strValue, hostheader);
                 WriteToLogFile($"{DateTime.Now.ToString("O")} Request completed to {strValue}");
                 WriteToLogFile($"{DateTime.Now.ToString("O")} Wait for {intValue}");
                 await Task.Delay(TimeSpan.FromSeconds(intValue));
