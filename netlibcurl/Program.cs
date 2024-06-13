@@ -47,7 +47,8 @@ public class LibCurlWrapper
         CURLOPT_HTTPHEADER = 10023,
         CURLOPT_DEBUGFUNCTION = 20094,
         CURLOPT_DEBUGDATA = 10095,
-        CURLOPT_SSL_VERIFYPEER = 64
+        CURLOPT_SSL_VERIFYPEER = 64,
+        CURLOPT_MAXAGE_CONN = 288
     }
 
     public enum CURLINFO : int
@@ -118,6 +119,8 @@ public class LibCurlWrapper
 
         // Enable connection reuse
         curl_easy_setopt(curl, CURLoption.CURLOPT_FORBID_REUSE, (IntPtr)0);
+
+        curl_easy_setopt(curl, CURLoption.CURLOPT_MAXAGE_CONN, (IntPtr)300);
 
         // Set timeout
         curl_easy_setopt(curl, CURLoption.CURLOPT_TIMEOUT, (IntPtr)10);
